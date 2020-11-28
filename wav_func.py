@@ -1,19 +1,23 @@
 import glob
+import math
+import multiprocessing
 import os
 import pickle
+from itertools import repeat
 
 import numpy as np
 import scipy.io.wavfile as wav
 from scipy import signal
 import matplotlib.pyplot as plt
+from multiprocessing import Pool
 
 from utils import *
 
 
 def CutSTFTBiside(Zxx):
     # leftOff = 32
-    leftOff =40
-    rightOff = 12
+    leftOff = 40
+    rightOff = 40
     timeLen = Zxx.shape[1]
     Zxx = Zxx[:,leftOff:timeLen-rightOff]
     return Zxx
@@ -41,15 +45,11 @@ def SingleSTFT(filePath, sonicFreq, lipOffset, nfft, frameTime=0.15, aheadTime=0
 
     filtSignal = filtSignal / max(abs(filtSignal))
 
-    signalNum = len(filtSignal)
-
-    lmsSignal = filtSignal
     nperseg = int(fs * frameTime)
     noverlap = int(fs * (frameTime-aheadTime))
-    f, t, Zxx = signal.stft(lmsSignal, fs, nperseg=nperseg, noverlap=noverlap, nfft=nfft)
-    Zxx = Zxx / nfft * 2
+    f, t, Zxx = signal.stft(filtSignal, fs, nperseg=nperseg, noverlap=noverlap, nfft=nfft)
+    # Zxx = Zxx / nfft * 2
     Zxx = CutSTFTBiside(Zxx)
-    # Zxx = CalPsd(Zxx)
     Zxx = np.abs(Zxx)
 
     t = t[0:Zxx.shape[1]]
@@ -57,7 +57,6 @@ def SingleSTFT(filePath, sonicFreq, lipOffset, nfft, frameTime=0.15, aheadTime=0
     down, up = LipGraphPara(sonicFreq, realOffset, fs, nfft)
     f = f[down:up]
     Zxx = Zxx[down:up,:]
-
     return t, f, Zxx
 
 def GaussWeight(x, sigma):
@@ -121,9 +120,9 @@ def CheckGradActive(Zxx):
         # if curMean > lowThresh:
         #     activation[i:i+winLen] = 1
 
-    plt.plot(sumRes)
-    plt.plot(activation*1000)
-    plt.show()
+    # plt.plot(sumRes)
+    # plt.plot(activation*1000)
+    # plt.show()
 
     return activation
 
@@ -181,7 +180,6 @@ def Str2Label(words, s2lDict):
 
 def SubAdjacent(Zxx):
     time = Zxx.shape[1]
-    shape = Zxx.shape
     result = np.zeros((Zxx.shape[0], time-1))
     for i in range(1, time):
         result[:, i - 1] = (Zxx[:, i] - Zxx[:, i - 1])
@@ -210,9 +208,12 @@ def CheckSplit(filePath, mapDict, sonicFreq, lipOffset, nfft):
     else:
 
         splitWords = SplitWord(Zxx, indexClips)
+        # for word in splitWords:
+        #     plt.pcolormesh(word)
+        #     plt.show()
         return splitWords, words
 
-def DealAllData(corpusPath, mapPath, vocabPath, ultraMaxLen, sonicFreq, lipOffset, nfft):
+def DealAllData(corpusPath, mapPath, vocabPath, ultraMaxLen, sonicFreq, lipOffset, nfft, saveDir):
 
     realUltra = []
     realLabel = []
@@ -251,11 +252,11 @@ def DealAllData(corpusPath, mapPath, vocabPath, ultraMaxLen, sonicFreq, lipOffse
         print("fail split rate is", failCount / allCount)
         file.close()
 
-        with open('tempData.dp', 'wb') as f:
+        with open(savedPath, 'wb') as f:
             tempData = [realUltra, realLabel]
             pickle.dump(tempData, f)
     else:
-        with open('tempData.dp', 'rb') as f:
+        with open(savedPath, 'rb') as f:
             tempData = pickle.load(f)
             realUltra = tempData[0]
             realLabel = tempData[1]
@@ -268,11 +269,63 @@ def DealAllData(corpusPath, mapPath, vocabPath, ultraMaxLen, sonicFreq, lipOffse
     for i in range(len(realLabel)):
         classIdx = realLabel[i]
         classData[classIdx].append(realUltra[i])
+
     trainPercent = 0.7
     trainUltra = []
     trainLabel = []
     testUltra = []
     testLabel = []
+
+    # trainFile = open('train.txt', 'w')
+    # testFile = open('test.txt', 'w')
+    # for i in range(vocabLen):
+    #     curLen = len(classData[i])
+    #     trainNum = int(curLen * trainPercent)
+    #     curWord = l2sDict[i]
+    #
+    #     for k in range(curLen):
+    #         saveName = f"{saveDir}{os.sep}{curWord}_{k}.jpg" + '\n'
+    #         if k < trainNum:
+    #             trainFile.write(saveName)
+    #         else:
+    #             testFile.write(saveName)
+    # trainFile.close()
+    # testFile.close()
+    #
+    # runNum = multiprocessing.cpu_count()
+    # perNum = math.ceil(vocabLen / runNum)
+    # print(f'per num is : {perNum}')
+    # farg = []
+    # sarg = []
+    # for i in range(runNum):
+    #     start = i * perNum
+    #     end = (i + 1) * perNum
+    #
+    #     if i != runNum - 1:
+    #         farg.append(classData[start:end])
+    #         sarg.append(list(range(start, end)))
+    #     else:
+    #         farg.append(classData[start:])
+    #         sarg.append(list(range(start, vocabLen)))
+    # inArg = zip(farg, sarg, repeat(l2sDict), repeat(saveDir))
+    # pool = Pool(runNum)
+    # pool.starmap(ParaOutPic, inArg)
+    # pool.close()
+    # pool.join()
+
+
+    # for i in range(vocabLen):
+    #     curLen = len(classData[i])
+    #     curWord = l2sDict[i]
+    #     for k in range(curLen):
+    #         plt.pcolormesh(classData[i][k])
+    #         plt.axis('off')
+    #         plt.gca().xaxis.set_major_locator(plt.NullLocator())
+    #         plt.gca().yaxis.set_major_locator(plt.NullLocator())
+    #         plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+    #         plt.margins(0, 0)
+    #         saveName = f"{saveDir}{os.sep}{curWord}_{k}.jpg"
+    #         plt.savefig(saveName)
 
     for i in range(vocabLen):
         curLen = len(classData[i])
@@ -283,12 +336,38 @@ def DealAllData(corpusPath, mapPath, vocabPath, ultraMaxLen, sonicFreq, lipOffse
         testLabel += [i] * (curLen - trainNum)
     return [trainUltra, trainLabel, testUltra, testLabel]
 
+def ParaOutPic(wordData, index, l2sDict, saveDir):
+    for i in range(len(index)):
+        idx = index[i]
+        curLen = len(wordData[i])
+        curWord = l2sDict[idx]
+        for k in range(curLen):
+            plt.pcolormesh(wordData[i][k])
+            plt.axis('off')
+            plt.gca().xaxis.set_major_locator(plt.NullLocator())
+            plt.gca().yaxis.set_major_locator(plt.NullLocator())
+            plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+            plt.margins(0, 0)
+            saveName = f"{saveDir}{os.sep}{curWord}_{k}.jpg"
+            plt.savefig(saveName)
+
+
 
 def ToDestData(data):
     trainUltra = data[0]
     trainLabel = data[1]
     testUltra = data[2]
     testLabel = data[3]
+    for i in range(len(trainLabel)):
+        plt.pcolormesh(trainUltra[i])
+        plt.axis('off')
+        plt.gca().xaxis.set_major_locator(plt.NullLocator())
+        plt.gca().yaxis.set_major_locator(plt.NullLocator())
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+        plt.margins(0, 0)
+        plt.savefig('test.jpg')
+        plt.show()
+
     trainUltraLen = np.zeros(len(trainUltra))
     trainLabelLen = np.zeros(len(trainLabel))
     testUltraLen = np.zeros(len(testUltra))
@@ -302,6 +381,14 @@ def ToDestData(data):
     trainLabelLen = np.array(trainLabelLen)
     testUltraLen = np.array(testUltraLen)
     testLabelLen = np.array(testLabelLen)
+    #归一化
+    trainMax = np.max(trainUltra)
+    trainMin = np.min(trainUltra)
+    testMax = np.max(testUltra)
+    testMin = np.min(testUltra)
+    trainUltra = (trainUltra - trainMin) / (trainMax - trainMin)
+    testUltra = (testUltra - testMin) / (testMax - testMin)
+
     trainData = [trainUltra, trainLabel, trainUltraLen, trainLabelLen]
     testData = [testUltra, testLabel, testUltraLen, testLabelLen]
     ##
